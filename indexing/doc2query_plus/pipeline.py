@@ -77,7 +77,7 @@ def build_pipeline(
 
     # Path B (Hooks)
     indexing_pipeline.connect("splitter.documents", "synthetic_gen.documents")
-    indexing_pipeline.connect("synthetic_gen.hook_documents", "hook_embedder.documents")
+    indexing_pipeline.connect("synthetic_gen.documents", "hook_embedder.documents")
     indexing_pipeline.connect("hook_embedder.documents", "hook_writer.documents")
 
     return indexing_pipeline

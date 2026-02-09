@@ -105,9 +105,10 @@ class SyntheticQueryGenerator:
             "Example: Instead of 'Compare Spekit and Highspot and their products' --> 'Spekit vs Highspot'"
         )
 
-    @component.output_types(hook_documents=List[Document])
+    @component.output_types(documents=List[Document])
     def run(self, documents: List[Document]):
-        hook_docs = []
+        queries = []
+        synthetic_documents = []
         print("Generating Synthetic Queries")
         for doc in tqdm(documents):
             try:
@@ -118,14 +119,17 @@ class SyntheticQueryGenerator:
                     continue
 
                 for q in parsed_response.queries:
+                    queries.append(q.model_dump())
                     # Self-Correction Filter: Only keep hooks where confidence is True
                     if q.confidence:
-                        hook_docs.append(
+                        synthetic_documents.append(
                             Document(
                                 content=q.text,
                                 meta={
                                     "parent_chunk_id": doc.id,
-                                    "document_id": doc.meta["document_id"], # original parent document
+                                    "document_id": doc.meta[
+                                        "document_id"
+                                    ],  # original parent document
                                     "lazy_query": q.text,
                                     "original_text": doc.content,  # Critical for inference swap
                                     "intent_type": "lazy_query",
@@ -135,12 +139,11 @@ class SyntheticQueryGenerator:
                         )
             except Exception as e:
                 print(f"Error processing doc {doc.id}: {e}")
-                #continue
-                raise e
+                continue
 
         return {
-            "hook_documents": hook_docs,
-            "metadata": {"synthetic_queries": hook_docs},
+            "documents": synthetic_documents,
+            "metadata": {"queries": queries},
         }
 
     def _generate(self, message: str, attempts: int = 3) -> Optional[LazyQueryResponse]:
