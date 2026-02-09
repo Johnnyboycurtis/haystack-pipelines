@@ -9,9 +9,11 @@ from haystack_integrations.document_stores.pinecone import PineconeDocumentStore
 # Import your custom components
 from .custom_components import LangChainSplitter, SyntheticQueryGenerator
 
+SENTENCE_TRANSFORMERS_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+
 
 def build_pipeline(
-    gemini_api_key: str, pinecone_api_key: str, index_name: str = "philosophy-doc2query"
+    gemini_api_key: str, pinecone_api_key: str, index_name: str = "demo"
 ):
 
     # 1. Define the Pinecone Spec (Serverless us-east-1 is default for free tier)
@@ -23,7 +25,7 @@ def build_pipeline(
     fact_document_store = PineconeDocumentStore(
         api_key=Secret.from_token(pinecone_api_key),
         index=index_name,
-        namespace="factual-index",
+        namespace="philosophy-doc2query",
         dimension=768,
         spec=pinecone_spec,
     )
@@ -31,7 +33,7 @@ def build_pipeline(
     hook_document_store = PineconeDocumentStore(
         api_key=Secret.from_token(pinecone_api_key),
         index=index_name,
-        namespace="synthetic-index",
+        namespace="philosophy-doc2query-synthetic",
         dimension=768,
         spec=pinecone_spec,
     )
@@ -49,9 +51,7 @@ def build_pipeline(
     # Path A: Factual Indexing
     indexing_pipeline.add_component(
         "fact_embedder",
-        SentenceTransformersDocumentEmbedder(
-            model="sentence-transformers/all-mpnet-base-v2"
-        ),
+        SentenceTransformersDocumentEmbedder(model=SENTENCE_TRANSFORMERS_MODEL),
     )
     indexing_pipeline.add_component(
         "fact_writer", DocumentWriter(document_store=fact_document_store)
@@ -63,9 +63,7 @@ def build_pipeline(
     )
     indexing_pipeline.add_component(
         "hook_embedder",
-        SentenceTransformersDocumentEmbedder(
-            model="sentence-transformers/all-mpnet-base-v2"
-        ),
+        SentenceTransformersDocumentEmbedder(model=SENTENCE_TRANSFORMERS_MODEL),
     )
     indexing_pipeline.add_component(
         "hook_writer", DocumentWriter(document_store=hook_document_store)
@@ -75,11 +73,11 @@ def build_pipeline(
 
     # Path A (Facts)
     indexing_pipeline.connect("splitter.documents", "fact_embedder.documents")
-    indexing_pipeline.connect("fact_embedder.output_documents", "fact_writer.documents")
+    indexing_pipeline.connect("fact_embedder.documents", "fact_writer.documents")
 
     # Path B (Hooks)
     indexing_pipeline.connect("splitter.documents", "synthetic_gen.documents")
     indexing_pipeline.connect("synthetic_gen.hook_documents", "hook_embedder.documents")
-    indexing_pipeline.connect("hook_embedder.output_documents", "hook_writer.documents")
+    indexing_pipeline.connect("hook_embedder.documents", "hook_writer.documents")
 
     return indexing_pipeline

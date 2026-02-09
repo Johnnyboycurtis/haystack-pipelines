@@ -7,6 +7,7 @@ from google import genai
 from google.genai import types
 from haystack import component, Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from tqdm import tqdm
 
 
 @component
@@ -106,8 +107,8 @@ class SyntheticQueryGenerator:
     @component.output_types(hook_documents=List[Document])
     def run(self, documents: List[Document]):
         hook_docs = []
-
-        for doc in documents:
+        print("Generating Synthetic Queries")
+        for doc in tqdm(documents):
             try:
                 message = self.prompt_template.format(text=doc.content)
                 parsed_response = self._generate(message=message)
@@ -123,6 +124,7 @@ class SyntheticQueryGenerator:
                                 content=q.text,
                                 meta={
                                     "parent_id": doc.id,
+                                    "lazy_query": q.text,
                                     "original_text": doc.content,  # Critical for inference swap
                                     "intent_type": "lazy_query",
                                     "source_title": doc.meta.get("title", "Unknown"),
@@ -133,7 +135,10 @@ class SyntheticQueryGenerator:
                 print(f"Error processing doc {doc.id}: {e}")
                 continue
 
-        return {"hook_documents": hook_docs}
+        return {
+            "hook_documents": hook_docs,
+            "metadata": {"synthetic_queries": hook_docs},
+        }
 
     def _generate(self, message: str, attempts: int = 3) -> Optional[LazyQueryResponse]:
         """Handles the API call to Gemini with retries and fallback parsing."""

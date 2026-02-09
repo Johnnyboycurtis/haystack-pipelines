@@ -1,36 +1,63 @@
+import os
 import pandas as pd
-
-# from .pipeline import build_pipeline
 from haystack import Document
 
-# Load Dataset
-import os
+# Import your pipeline builder
+# Assuming your file is named pipeline.py
+from doc2query_plus.pipeline import build_pipeline
 
-data_cache = "data/stanford_encyclopedia_of_philosophy.csv"
+# 1. Setup Environment and Data Cache
+import local_config as config
 
+GEMINI_API_KEY = config.GEMINI_API_KEY
+PINECONE_API_KEY = config.PINECONE_API_KEY
+PINECONE_INDEX_NAME = config.PINECONE_INDEX_NAME
+
+
+data_dir = "data"
+os.makedirs(data_dir, exist_ok=True)
+data_cache = os.path.join(data_dir, "stanford_encyclopedia_of_philosophy.csv")
+
+# 2. Load Dataset
+print("Checking for cached data...")
 if os.path.isfile(data_cache):
+    print("Loading from cache...")
     df = pd.read_csv(data_cache)
 else:
-    # df = pd.read_csv("hf://datasets/johnnyboycurtis/stanford_encyclopedia_of_philosophy/stanford_encyclopedia_of_philosophy.csv")
+    print("Downloading dataset from Hugging Face...")
     from datasets import load_dataset
 
-    # Login using e.g. `huggingface-cli login` to access this dataset
     ds = load_dataset("johnnyboycurtis/stanford_encyclopedia_of_philosophy")
     df = ds["train"].to_pandas()
     df.to_csv(data_cache, index=False)
 
+N_SAMPLE = 1
 
-# Convert DataFrame to Haystack Documents
+# 3. Prepare Documents
+print("Preparing documents for indexing...")
+# We'll take the first 10 entries for this experiment
 raw_docs = [
-    Document(content=row["contents"], meta={"title": row["entries"]})
-    for _, row in df.head(10).iterrows()  # Testing with first 10 entries
+    Document(content=row["contents"], meta={"title": row["entry"]})
+    for _, row in df.head(1).iterrows()
 ]
 
-indexing_pipeline = build_pipeline()
-# Run Indexing
-# Note: Because the LLM step is per-document, for large datasets
-# you should run this in a loop or use Haystack's batch features.
-for doc in raw_docs:
-    indexing_pipeline.run({"splitter": {"documents": [doc]}})
+# 4. Initialize the Pipeline
+print("Building the Doc2Query++ Pipeline...")
+indexing_pipeline = build_pipeline(
+    gemini_api_key=GEMINI_API_KEY,
+    pinecone_api_key=PINECONE_API_KEY,
+    index_name=PINECONE_INDEX_NAME,
+)
 
-print("Indexing Complete. Factual chunks and Synthetic Hooks are now in Pinecone.")
+print(indexing_pipeline)
+
+# 5. Run Indexing
+# We pass the entire list. The splitter will chunk them,
+# and the generator will process each chunk.
+print(f"Starting indexing for {len(raw_docs)} source documents...")
+output = indexing_pipeline.run({"splitter": {"documents": raw_docs}})
+print("\n" + "=" * 30)
+print("INDEXING COMPLETE")
+print("Path A: Factual chunks are in namespace 'factual-index'")
+print("Path B: Synthetic Hooks are in namespace 'synthetic-index'")
+print("=" * 30)
