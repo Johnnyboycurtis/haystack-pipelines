@@ -28,9 +28,10 @@ class LangChainSplitter:
             chunks = self.splitter.split_text(doc.content)
             for i, chunk in enumerate(chunks):
                 metadata = doc.meta.copy()
-                metadata["parent_id"] = doc.id
+                metadata["document_id"] = doc.id
                 metadata["chunk_index"] = i
-                all_chunks.append(Document(content=chunk, meta=metadata))
+                curr_chunk = Document(id=f"{doc.id}_{i}", content=chunk, meta=metadata)
+                all_chunks.append(curr_chunk)
         return {"documents": all_chunks}
 
 
@@ -99,7 +100,7 @@ class SyntheticQueryGenerator:
         self.system_instruction = (
             "You are an expert at predicting 'Lazy' user search intent. "
             "Users are often in a hurry and type fragments or keywords rather than full questions. "
-            "Generate 1 to 5 queries that represent how a user would find the provided text. "
+            "Generate 1 to 3 queries that represent how a user would find the provided text. "
             "Only include queries that are explicitly supported by the facts in the text. "
             "Example: Instead of 'Compare Spekit and Highspot and their products' --> 'Spekit vs Highspot'"
         )
@@ -123,17 +124,19 @@ class SyntheticQueryGenerator:
                             Document(
                                 content=q.text,
                                 meta={
-                                    "parent_id": doc.id,
+                                    "parent_chunk_id": doc.id,
+                                    "document_id": doc.meta["document_id"], # original parent document
                                     "lazy_query": q.text,
                                     "original_text": doc.content,  # Critical for inference swap
                                     "intent_type": "lazy_query",
-                                    "source_title": doc.meta.get("title", "Unknown"),
+                                    "source_title": doc.meta["title"],
                                 },
                             )
                         )
             except Exception as e:
                 print(f"Error processing doc {doc.id}: {e}")
-                continue
+                #continue
+                raise e
 
         return {
             "hook_documents": hook_docs,

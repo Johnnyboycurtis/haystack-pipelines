@@ -5,6 +5,7 @@ from haystack import Document
 # Import your pipeline builder
 # Assuming your file is named pipeline.py
 from doc2query_plus.pipeline import build_pipeline
+from uuid import uuid4
 
 # 1. Setup Environment and Data Cache
 import local_config as config
@@ -29,17 +30,20 @@ else:
 
     ds = load_dataset("johnnyboycurtis/stanford_encyclopedia_of_philosophy")
     df = ds["train"].to_pandas()
+    # generate document IDs; standard in a structured database
+    df["document_id"] = [str(uuid4()) for _ in range(df.shape[0])]
     df.to_csv(data_cache, index=False)
-
-N_SAMPLE = 1
 
 # 3. Prepare Documents
 print("Preparing documents for indexing...")
 # We'll take the first 10 entries for this experiment
-raw_docs = [
-    Document(content=row["contents"], meta={"title": row["entry"]})
-    for _, row in df.head(1).iterrows()
-]
+raw_docs = []
+for _, row in df.head(1).iterrows():
+    doc = Document(
+        id=row["document_id"], content=row["contents"], meta={"title": row["entry"]}
+    )
+    raw_docs.append(doc)
+
 
 # 4. Initialize the Pipeline
 print("Building the Doc2Query++ Pipeline...")
