@@ -4,6 +4,7 @@ from haystack import Pipeline, component, Document
 from haystack.utils import Secret
 from haystack.components.builders import ChatPromptBuilder
 from haystack.components.embedders import SentenceTransformersTextEmbedder
+from haystack.components.rankers import SentenceTransformersSimilarityRanker
 from haystack_integrations.components.generators.google_genai import (
     GoogleGenAIChatGenerator,
 )
@@ -17,23 +18,24 @@ import local_config as config
 
 # --- Custom Component: Document Joiner ---
 
+
 @component
 class DocumentJoiner:
     """
     Joins documents from the factual and synthetic retrievers.
     For now, performs basic concatenation.
     """
+
     @component.output_types(documents=List[Document])
     def run(self, fact_docs: List[Document], synthetic_docs: List[Document]):
         # Tagging for visibility in the demo printout
         for doc in fact_docs:
             doc.meta["origin"] = "factual"
         for doc in synthetic_docs:
+            # doc.content = doc.meta["original_text"]
             doc.meta["origin"] = "synthetic"
-            # Optional: If you want the LLM to see the original factual text 
-            # instead of the lazy query, you'd swap content here.
-            # doc.content = doc.meta.get("original_text", doc.content)
         return {"documents": fact_docs + synthetic_docs}
+
 
 # --- Pipeline Setup ---
 
@@ -52,21 +54,29 @@ synthetic_store = PineconeDocumentStore(
     dimension=384,
 )
 
-# 2. Define the RAG Prompt
-template = [ChatMessage.from_user("""
-        Answer the question based on the provided context from the Stanford Encyclopedia of Philosophy.
-        The context contains both factual excerpts and synthetic intent matches.
-        
-        If the answer isn't in the context, explain what you did find.
 
-        Context:
-        {% for doc in documents %}
+MESSAGE_TEMPLATE = """
+    Answer the question based on the provided context from the Stanford Encyclopedia of Philosophy.
+    The context contains both factual excerpts and synthetic intent matches.
+    
+    If the answer isn't in the context, explain what you did find.
+
+    Context:
+    Context:
+    {% for doc in documents %}
+        {% if doc.meta.original_text %}
+            {{ doc.meta.original_text }}
+        {% else %}
             {{ doc.content }}
-        {% endfor %}
+        {% endif %}
+    {% endfor %}
 
-        Question: {{ question }}
-        Answer:
-        """)]
+    Question: {{ question }}
+    Answer:
+    """
+
+# 2. Define the RAG Prompt
+template = [ChatMessage.from_user(MESSAGE_TEMPLATE)]
 
 rag_pipe = Pipeline()
 
@@ -81,11 +91,13 @@ rag_pipe.add_component(
     "fact_retriever", PineconeEmbeddingRetriever(document_store=fact_store, top_k=10)
 )
 rag_pipe.add_component(
-    "synthetic_retriever", PineconeEmbeddingRetriever(document_store=synthetic_store, top_k=10)
+    "synthetic_retriever",
+    PineconeEmbeddingRetriever(document_store=synthetic_store, top_k=10),
 )
 
 # Joiner
-rag_pipe.add_component("joiner", DocumentJoiner())
+rag_pipe.add_component("document_joiner", DocumentJoiner())
+rag_pipe.add_component("reranker", SentenceTransformersSimilarityRanker())
 
 # Generator & Prompt
 rag_pipe.add_component("prompt_builder", ChatPromptBuilder(template=template))
@@ -104,14 +116,35 @@ rag_pipe.connect("embedder.embedding", "fact_retriever.query_embedding")
 rag_pipe.connect("embedder.embedding", "synthetic_retriever.query_embedding")
 
 # Connect Retrievers to Joiner
-rag_pipe.connect("fact_retriever.documents", "joiner.fact_docs")
-rag_pipe.connect("synthetic_retriever.documents", "joiner.synthetic_docs")
+rag_pipe.connect("fact_retriever.documents", "document_joiner.fact_docs")
+rag_pipe.connect("synthetic_retriever.documents", "document_joiner.synthetic_docs")
 
 # Connect Joiner to Prompt
-rag_pipe.connect("joiner.documents", "prompt_builder.documents")
+rag_pipe.connect("document_joiner.documents", "reranker.documents")
+rag_pipe.connect("reranker.documents", "prompt_builder.documents")
 rag_pipe.connect("prompt_builder.prompt", "llm.messages")
 
 rag_pipe.warm_up()
+
+
+class RAGAgent:
+    pipeline = rag_pipe
+
+    def chat(self, query: str):
+        data = {
+            "embedder": {"text": query},
+            "prompt_builder": {"question": query},
+            "reranker": {"query": query},
+        }
+        output = self.pipeline.run(
+            data=data,
+            include_outputs_from=["reranker"],
+        )
+
+        return output
+
+
+agent = RAGAgent()
 
 # --- 5. Run a test query ---
 
@@ -124,16 +157,13 @@ if __name__ == "__main__":
         query = message.strip()
         print(f"\nDual-Path Querying: {query}...")
 
-        result = rag_pipe.run(
-            data={"embedder": {"text": query}, "prompt_builder": {"question": query}},
-            include_outputs_from=["joiner"],
-        )
+        result = agent.chat(query=query)
 
         print("\n--- RESPONSE ---")
         print(result["llm"]["replies"][0].text)
-        
+
         print("\n--- MERGED SOURCES ---")
-        for doc in result["joiner"]["documents"]:
+        for doc in result["reranker"]["documents"]:
             origin = doc.meta.get("origin", "unknown")
             chunk_id = doc.meta.get("parent_chunk_id") or doc.id
             title = doc.meta.get("title") or doc.meta.get("source_title")
