@@ -5,7 +5,7 @@ This project implements a **Doc2Query++** indexing pipeline using **Haystack 2.0
 ## 🎯 The Problem: The "Lazy Prompter"
 In production RAG, retrieval often fails because:
 *   **Users** provide fragments and shorthand (e.g., *"Spekit vs Highspot"*).
-*   **Documents** are written in narrative, technical prose that lacks these shorthand "hooks."
+*   **Documents** are written in narrative, technical prose that lacks these shorthand "hooks" or reliable simple terms for retrieval by people performing searches.
 
 This pipeline creates a **translation layer** by indexing not just what the document *is*, but what questions the document *answers*.
 
@@ -13,9 +13,43 @@ This pipeline creates a **translation layer** by indexing not just what the docu
 The pipeline implements a **Dual-Path Indexing Strategy**:
 
 1.  **Path A (The Facts):** The original document is chunked and embedded.
-2.  **Path B (The Hooks):** An LLM (Gemini 2.5 Flash) analyzes each chunk to predict 1-3 "Lazy Queries" a human might use to find that info. These queries are embedded as separate "Hook" documents.
+2.  **Path B (The Synthetic Queries):** An LLM (Gemini 2.5 Flash) analyzes each chunk to predict 1-3 "Lazy Queries" a human might use to find that info. These queries are embedded as separate "Hook" documents.
 
 Both paths are logically linked via `parent_chunk_id` and `document_id` metadata, allowing for seamless de-duplication and "swapping" during the retrieval phase.
+
+
+```mermaid
+graph TD
+    subgraph Input
+        A[Source Documents] --> B(LangChainSplitter)
+    end
+
+    subgraph "Path A: The Facts"
+        B --> C[Factual Text Chunks]
+        C --> D[SentenceTransformers Embedder]
+        D --> E[(Pinecone: philosophy-doc2query)]
+    end
+
+    subgraph "Path B: The Synthetic Queries (Doc2Query++)"
+        B --> F{SyntheticQueryGenerator}
+        F -->|Gemini 2.5 Flash| G[Predict 1-3 Lazy Queries]
+        G --> H{Self-Correction Filter}
+        H -->|Confidence = False| I[Discard]
+        H -->|Confidence = True| J[Intent Synthetic Queries + Metadata]
+        J --> K[SentenceTransformers Embedder]
+        K --> L[(Pinecone: philosophy-doc2query-synthetic)]
+    end
+
+    subgraph Metadata_Linkage
+        E -.->|parent_chunk_id| L
+        L -.->|original_text| E
+    end
+
+    style F fill:#f9f,stroke:#333,stroke-width:2px
+    style H fill:#fff4dd,stroke:#d4a017,stroke-width:2px
+    style L fill:#e1f5fe,stroke:#01579b
+    style E fill:#e1f5fe,stroke:#01579b
+```
 
 ## 📂 Project Structure
 ```text
@@ -68,7 +102,7 @@ python demo_doc2query.py
 ## 📊 Technical Details
 *   **Embedding Model:** `sentence-transformers/all-MiniLM-L6-v2`
 *   **LLM:** `gemini-2.5-flash-lite`
-*   **Vector Dimension:** 768 (Note: Ensure your Pinecone index matches the embedding model dimension).
+*   **Vector Dimension:** 384 (Note: Ensure your Pinecone index matches the embedding model dimension).
 *   **Chunk Size:** 400 tokens.
 
 ## 📝 Note
